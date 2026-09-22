@@ -5,6 +5,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "ast.h"
+#include "semantic_analyzer.h"
 
 // Reads the whole file into a string. Returns false if it couldn't be opened.
 static bool readFile(const std::string& path, std::string& out) {
@@ -23,6 +24,17 @@ static void printTokens(const std::vector<Token>& tokens) {
         std::cout << std::left << std::setw(6) << tok.line
                    << std::setw(19) << tokenTypeToString(tok.type)
                    << tok.lexeme << "\n";
+    }
+}
+
+static void printSymbolTable(const SymbolTable& table) {
+    std::cout << "Name            Type    First Line  Last Line\n";
+    std::cout << "--------------  ------  ----------  ---------\n";
+    for (const SymbolEntry& entry : table.entries()) {
+        std::cout << std::left << std::setw(16) << entry.name
+                   << std::setw(8) << entry.type
+                   << std::setw(12) << entry.firstAssignLine
+                   << entry.lastAssignLine << "\n";
     }
 }
 
@@ -70,11 +82,32 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ---- Stage 3: Semantic Analysis (AST -> typed AST + Symbol Table) ----
+    // Runs on whatever statements the parser did manage to produce, even if
+    // there were earlier lexical/syntax errors -- same recover-and-continue
+    // philosophy as the lexer and parser, so a single run surfaces as many
+    // issues as possible.
+    SemanticAnalyzer semanticAnalyzer;
+    semanticAnalyzer.analyze(*program);
+
+    std::cout << "\n=== Semantic Analysis ===\n";
+    if (semanticAnalyzer.hasErrors()) {
+        for (const SemanticError& err : semanticAnalyzer.getErrors()) {
+            std::cout << "  Line " << err.line << ": " << err.message << "\n";
+        }
+    } else {
+        std::cout << "  No semantic errors.\n";
+    }
+
+    std::cout << "\n=== Symbol Table ===\n";
+    printSymbolTable(semanticAnalyzer.getSymbolTable());
+
     // ---- Summary ----
-    bool ok = !lexer.hasErrors() && !parser.hasErrors();
+    bool ok = !lexer.hasErrors() && !parser.hasErrors() && !semanticAnalyzer.hasErrors();
     std::cout << "\n=== Result: " << (ok ? "SUCCESS" : "FAILED")
                << " (" << lexer.getErrors().size() << " lexical error(s), "
-               << parser.getErrors().size() << " syntax error(s)) ===\n";
+               << parser.getErrors().size() << " syntax error(s), "
+               << semanticAnalyzer.getErrors().size() << " semantic error(s)) ===\n";
 
     return ok ? 0 : 1;
 }

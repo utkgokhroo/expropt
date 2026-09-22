@@ -123,12 +123,21 @@ See `tests/invalid/06_lexical_error_recovery.exo` and
 
 ```
 ExprOpt/
-├── include/           # token.h, lexer.h, ast.h, parser.h
+├── include/           # token.h, lexer.h, ast.h, parser.h, symbol_table.h, semantic_analyzer.h
 ├── src/                # matching .cpp files + main.cpp (CLI driver)
 ├── tests/
-│   ├── valid/          # basic assignment, precedence, parens, unary minus,
-│   │                    multiple statements
-│   └── invalid/        # lexical error recovery, syntax error recovery
+│   ├── valid/          # full pipeline valid: pass lexing, parsing, AND semantic
+│   │                    analysis with zero errors (basic assignment, multiple
+│   │                    statements with variables declared before use)
+│   ├── parser-demo/    # syntax-valid parser/AST demonstrations (operator
+│   │                    precedence, parentheses, unary minus) that use
+│   │                    undeclared identifiers on purpose, so they correctly
+│   │                    fail semantic analysis -- useful for showing the
+│   │                    Lexer/Parser/AST stages in isolation
+│   ├── semantic/        # semantic-analysis-specific cases: valid program,
+│   │                    type mismatch, unknown identifier, division by zero,
+│   │                    mixed int/float promotion, multiple errors in one run
+│   └── invalid/         # lexical error recovery, syntax error recovery
 ├── Makefile
 └── README.md
 ```

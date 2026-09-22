@@ -26,6 +26,10 @@ protected:
 
 struct ExprNode : ASTNode {
     using ASTNode::ASTNode;
+    // Synthesized attribute filled in by the semantic analyzer ("int",
+    // "float", or "invalid" for an expression built on an earlier error).
+    // Empty until semantic analysis runs.
+    std::string inferredType;
 };
 
 struct IntLiteralNode : ExprNode {
