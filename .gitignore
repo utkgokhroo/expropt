@@ -1,3 +1,6 @@
 expropt.exe
 *.o
 .vscode/
+*.pdf
+*.ppt
+*.pptx

@@ -6,6 +6,9 @@
 #include "parser.h"
 #include "ast.h"
 #include "semantic_analyzer.h"
+#include "tac.h"
+#include "tac_generator.h"
+#include "tac_optimizer.h"
 
 // Reads the whole file into a string. Returns false if it couldn't be opened.
 static bool readFile(const std::string& path, std::string& out) {
@@ -35,6 +38,22 @@ static void printSymbolTable(const SymbolTable& table) {
                    << std::setw(8) << entry.type
                    << std::setw(12) << entry.firstAssignLine
                    << entry.lastAssignLine << "\n";
+    }
+}
+
+static void printTAC(const std::vector<TACInstruction>& instructions) {
+    for (const TACInstruction& instr : instructions) {
+        std::cout << formatTACInstruction(instr) << "\n";
+    }
+}
+
+static void printOptimizationLog(const std::vector<OptimizationLogEntry>& log) {
+    if (log.empty()) {
+        std::cout << "  (no transformations applied)\n";
+        return;
+    }
+    for (const OptimizationLogEntry& entry : log) {
+        std::cout << "  Line " << entry.line << ": " << entry.description << "\n";
     }
 }
 
@@ -102,8 +121,44 @@ int main(int argc, char* argv[]) {
     std::cout << "\n=== Symbol Table ===\n";
     printSymbolTable(semanticAnalyzer.getSymbolTable());
 
+    // ---- Stage 4: TAC Generation (typed AST -> unoptimized TAC) ----
+    // Only runs on a fully clean pipeline: TAC generation assumes every
+    // identifier resolved and every expression's inferredType already set
+    // to a real type, which is only guaranteed once lexing, parsing, and
+    // semantic analysis all succeeded. There is no meaningful "error TAC"
+    // to recover into, unlike the earlier stages.
+    bool cleanSoFar = !lexer.hasErrors() && !parser.hasErrors() && !semanticAnalyzer.hasErrors();
+
+    std::cout << "\n=== TAC ===\n";
+    std::vector<TACInstruction> tac;
+    if (cleanSoFar) {
+        TACGenerator tacGenerator;
+        tac = tacGenerator.generate(*program);
+        printTAC(tac);
+    } else {
+        std::cout << "  Skipped (fix lexical/syntax/semantic errors above first).\n";
+    }
+
+    // ---- Stage 5: TAC Optimization (unoptimized TAC -> optimized TAC) ----
+    // Same gating as Stage 4 for the same reason: optimization operates on
+    // the TAC Stage 4 produced, so it only makes sense to run once that
+    // TAC actually exists. The original (unoptimized) 'tac' vector above
+    // is left untouched -- optimize() returns a separate vector -- so both
+    // remain available for side-by-side comparison.
+    std::cout << "\n=== Optimized TAC ===\n";
+    if (cleanSoFar) {
+        TACOptimizer optimizer;
+        std::vector<TACInstruction> optimizedTac = optimizer.optimize(tac);
+        printTAC(optimizedTac);
+
+        std::cout << "\n=== Optimization Log ===\n";
+        printOptimizationLog(optimizer.getLog());
+    } else {
+        std::cout << "  Skipped (fix lexical/syntax/semantic errors above first).\n";
+    }
+
     // ---- Summary ----
-    bool ok = !lexer.hasErrors() && !parser.hasErrors() && !semanticAnalyzer.hasErrors();
+    bool ok = cleanSoFar;
     std::cout << "\n=== Result: " << (ok ? "SUCCESS" : "FAILED")
                << " (" << lexer.getErrors().size() << " lexical error(s), "
                << parser.getErrors().size() << " syntax error(s), "

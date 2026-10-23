@@ -1,29 +1,52 @@
-# ExprOpt — Phase 1 Prototype (Review 1)
+# ExprOpt: A C++ Compiler Pipeline for Expression Analysis and Optimization
 
-## What is ExprOpt?
+Compiler Design Laboratory project (Review 3, Phase 3 final). Individual project by Utkarsh Gokhroo, 24BCE0919, VIT Vellore.
 
-ExprOpt is a small compiler project for a toy expression language with
-integer/float variables and arithmetic assignment statements. The full
-project (per the submitted Phase 1 report) is planned as a linear pipeline:
+ExprOpt is a hand-written C++17 compiler pipeline for a small expression-and-assignment language with `int` and `float` variables. Every stage is implemented from first principles: no Lex, Flex, Yacc, Bison or ANTLR.
 
 ```
-Source → Lexer → Parser → AST → Semantic Analyzer → Symbol Table
-       → TAC Generator → Optimizer → Optimized TAC
+Source -> Lexer -> Parser -> AST -> Semantic Analyzer + Symbol Table
+       -> TAC Generator -> TAC Optimizer -> Optimized TAC + Optimization Log
 ```
 
-## Phase 1 scope (this submission)
+## Implemented
 
-Only the first part of the pipeline is implemented for Review 1:
+| Phase | Stage | Files |
+|-------|-------|-------|
+| 1 | Lexer (single pass, lexical error recovery) | `lexer`, `token` |
+| 1 | Recursive-descent parser (panic-mode recovery) | `parser` |
+| 1 | AST (`unique_ptr` nodes, line numbers, `inferredType`) | `ast` |
+| 2 | Flat symbol table | `symbol_table` |
+| 2 | Semantic analyzer (bottom-up type inference) | `semantic_analyzer` |
+| 2 | Three-address code (TAC) generator | `tac`, `tac_generator` |
+| 3 | TAC optimizer (single forward pass, with log) | `tac_optimizer` |
+| 1-3 | Driver: staged output, error gating, exit code | `src/main.cpp` |
 
-```
-Source → Lexer → Token Stream → Recursive-Descent Parser → AST
-```
+Headers are in `include/`, implementations in `src/`.
 
-Everything after the AST (semantic analysis, symbol table, three-address
-code generation, optimization) is **not implemented** — see "What is NOT
-implemented yet" below.
+### Phase 3 optimizer
 
-## How to build
+Per instruction, in this order:
+
+1. **Constant propagation**: replace an operand with its known constant value.
+2. **Constant folding**: if both operands are literals, compute the result (integer or floating-point arithmetic chosen by the instruction's type).
+3. **Identity simplification** (right-hand operand only, exactly four forms): `x + 0 -> x`, `x - 0 -> x`, `x * 1 -> x`, `x / 1 -> x`.
+4. **Update** the known-constants table: record a copy of a literal, otherwise erase the entry.
+
+`optimize()` returns a new vector, so the unoptimized TAC stays available for side-by-side comparison. Every transformation is written to the optimization log.
+
+## Not implemented
+
+- Dead-code elimination, common-subexpression elimination, SSA, liveness analysis, CFG or loop optimization
+- `x * 0 -> 0` (deliberately excluded: unsafe for float NaN/Inf) and left-hand identities (`0 + x`, `1 * x`)
+- Multiple optimization passes, strength reduction
+- Control flow, functions, blocks, types other than `int` and `float`
+- Machine-code generation or program execution (output is TAC text only)
+- Column-level diagnostics (line numbers only)
+- Detection of non-literal zero divisors: `y = 0; z = 5 / y;` passes semantic analysis and the optimizer leaves `5 / 0` unfolded
+- An automated regression-test script
+
+## Build
 
 Requires a C++17 compiler (g++) and `make`. No external libraries.
 
@@ -31,10 +54,19 @@ Requires a C++17 compiler (g++) and `make`. No external libraries.
 make
 ```
 
-This compiles `src/*.cpp` with `g++ -std=c++17 -Wall -Wextra` and produces
-the `expropt` binary in the project root. `make clean` removes it.
+or the equivalent direct command:
 
-## How to run
+```
+g++ -std=c++17 -Wall -Wextra -Iinclude \
+    src/main.cpp src/lexer.cpp src/token.cpp src/parser.cpp \
+    src/ast.cpp src/symbol_table.cpp src/semantic_analyzer.cpp \
+    src/tac.cpp src/tac_generator.cpp src/tac_optimizer.cpp \
+    -o expropt
+```
+
+Both produce the `expropt` binary with zero warnings. `make clean` removes it.
+
+## Run
 
 ```
 ./expropt <source-file.exo>
@@ -43,114 +75,87 @@ the `expropt` binary in the project root. `make clean` removes it.
 Example:
 
 ```
-./expropt tests/valid/01_basic_assignment.exo
+./expropt tests/optimizer/02_constant_propagation.exo
 ```
 
-The program prints the pipeline stage by stage:
+Output stages: Source, Tokens, AST, Semantic Analysis, Symbol Table, TAC, Optimized TAC, Optimization Log, Result. TAC generation and optimization run only when there are no lexical, syntax or semantic errors; otherwise both print `Skipped`.
 
-1. **Source** — the input file, echoed back.
-2. **Tokens** — the full token stream produced by the lexer (type, lexeme,
-   line number), plus any lexical errors found.
-3. **AST** — the parsed syntax tree as an indented node dump, plus any
-   syntax errors found.
-4. **Result** — a one-line summary with the error counts and exit code
-   (`0` = clean, `1` = one or more lexical/syntax errors).
+Exit code: `0` = clean, `1` = one or more errors (or bad usage / unreadable file).
 
-## Supported grammar
+### Example
+
+Input (`tests/optimizer/02_constant_propagation.exo`):
 
 ```
-program     → statement* EOF
-statement   → IDENTIFIER ASSIGN expression SEMICOLON
-expression  → term ((PLUS | MINUS) term)*
-term        → factor ((MULTIPLY | DIVIDE) factor)*
-factor      → MINUS factor
-            | LPAREN expression RPAREN
-            | INTEGER_LITERAL
-            | FLOAT_LITERAL
-            | IDENTIFIER
+x = 5;
+y = x + 2;
 ```
 
-Supported tokens: identifiers, integer literals, float literals (`digit+ '.'
-digit+`), `= + - * / ( ) ;`, and whitespace/newlines (skipped). Operator
-precedence (`*` `/` bind tighter than `+` `-`) and left-associativity are
-encoded directly in the grammar layering, exactly as in the report.
-
-## Example input/output
-
-Input (`w = -x + 3;`):
+Output (TAC stages):
 
 ```
-=== Tokens ===
-Line  Type               Lexeme
-----  -----------------  ------
-1     IDENTIFIER         w
-1     ASSIGN             =
-1     MINUS              -
-1     IDENTIFIER         x
-1     PLUS               +
-1     INTEGER_LITERAL    3
-1     SEMICOLON          ;
-2     END_OF_FILE
+=== TAC ===
+x = 5
+t1 = x + 2
+y = t1
 
-=== AST ===
-Program
-  AssignStmt w =  (line 1)
-    BinaryExpr +  (line 1)
-      UnaryExpr -  (line 1)
-        Identifier x  (line 1)
-      IntLiteral 3  (line 1)
+=== Optimized TAC ===
+x = 5
+t1 = 7
+y = 7
 
-=== Result: SUCCESS (0 lexical error(s), 0 syntax error(s)) ===
+=== Optimization Log ===
+  Line 2: propagated 'x' -> '5' in computation of 't1'
+  Line 2: constant folded '5 + 2' -> '7'
+  Line 2: propagated 't1' -> '7' in computation of 'y'
+
+=== Result: SUCCESS (0 lexical error(s), 0 syntax error(s), 0 semantic error(s)) ===
 ```
 
-### Error recovery
+## Language
 
-Both the lexer and the parser use error recovery instead of stopping at the
-first problem, per the report's design:
+```
+program     -> statement* EOF
+statement   -> IDENTIFIER ASSIGN expression SEMICOLON
+expression  -> term ((PLUS | MINUS) term)*
+term        -> factor ((MULTIPLY | DIVIDE) factor)*
+factor      -> MINUS factor
+             | LPAREN expression RPAREN
+             | INTEGER_LITERAL
+             | FLOAT_LITERAL
+             | IDENTIFIER
+```
 
-- **Lexer**: an invalid character or a malformed numeric literal (e.g.
-  `3.14.5`) is recorded as an error and skipped; scanning continues and
-  later valid tokens are still produced.
-- **Parser**: on a syntax error, tokens are discarded (panic mode) until a
-  `SEMICOLON` or `EOF` is found, then parsing resumes at the next
-  statement — so one bad statement doesn't prevent later valid statements
-  from appearing in the AST.
+Identifiers are `[a-zA-Z_][a-zA-Z0-9_]*`; float literals are `digit+ '.' digit+`. A variable's type is fixed at its first assignment. `int / int` truncates; any float operand promotes the result to float.
 
-See `tests/invalid/06_lexical_error_recovery.exo` and
-`tests/invalid/07_syntax_error_recovery.exo` for worked examples.
+## Error handling
+
+- **Lexical**: an invalid character or malformed number is recorded and skipped; scanning continues.
+- **Syntax**: panic mode, discard tokens to the next `;` and resume at the next statement.
+- **Semantic**: unknown identifier, type mismatch on reassignment, division by a literal zero. All are reported in one run; an internal `invalid` type prevents cascading messages.
+
+## Tests
+
+16 programs under `tests/`; run any with `./expropt <file>`.
+
+| Folder | Files | Expected exit | Purpose |
+|--------|-------|---------------|---------|
+| `valid/` | 2 | 0 | Clean full pipeline |
+| `optimizer/` | 3 | 0 | Folding, propagation, identity-form programs |
+| `semantic/` | 6 | 0 (01, 05), 1 (02, 03, 04, 06) | Valid, mixed int/float, and each semantic error class |
+| `invalid/` | 2 | 1 | Lexical and syntax error recovery |
+| `parser-demo/` | 3 | 1 | Precedence, parentheses, unary minus (undeclared identifiers on purpose, so semantic analysis rejects them) |
+
+Results are checked by inspection of the output; there is no automated expected-output comparison yet.
 
 ## Project structure
 
 ```
-ExprOpt/
-├── include/           # token.h, lexer.h, ast.h, parser.h, symbol_table.h, semantic_analyzer.h
-├── src/                # matching .cpp files + main.cpp (CLI driver)
-├── tests/
-│   ├── valid/          # full pipeline valid: pass lexing, parsing, AND semantic
-│   │                    analysis with zero errors (basic assignment, multiple
-│   │                    statements with variables declared before use)
-│   ├── parser-demo/    # syntax-valid parser/AST demonstrations (operator
-│   │                    precedence, parentheses, unary minus) that use
-│   │                    undeclared identifiers on purpose, so they correctly
-│   │                    fail semantic analysis -- useful for showing the
-│   │                    Lexer/Parser/AST stages in isolation
-│   ├── semantic/        # semantic-analysis-specific cases: valid program,
-│   │                    type mismatch, unknown identifier, division by zero,
-│   │                    mixed int/float promotion, multiple errors in one run
-│   └── invalid/         # lexical error recovery, syntax error recovery
+expropt/
+├── include/      # token.h, lexer.h, ast.h, parser.h, symbol_table.h,
+│                 # semantic_analyzer.h, tac.h, tac_generator.h, tac_optimizer.h
+├── src/          # matching .cpp files + main.cpp
+├── tests/        # valid/ optimizer/ semantic/ invalid/ parser-demo/
 ├── Makefile
 └── README.md
 ```
-
-## What is NOT implemented yet
-
-Per the Phase 1 scope, the following are intentionally left for later
-phases and are **not** part of this submission:
-
-- Semantic analysis (type inference/checking)
-- Symbol table
-- Three-address code (TAC) generation
-- Optimization (constant folding, constant propagation, algebraic
-  simplification)
-- GUI (this is a terminal/CLI tool only)
-- Any error recovery beyond what's needed for the Phase 1 parser
